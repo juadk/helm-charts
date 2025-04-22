@@ -1,0 +1,50 @@
+# This workflow is a reusable one called by other workflows
+name: Airgap E2E Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_runner:
+        description: Destroy the auto-generated self-hosted runner
+        default: true
+        type: boolean
+      runner_template:
+        description: Runner template to use
+        default: kubewarden-e2e-ci-runner-x86-64-template-v1
+        type: string
+      zone:
+        description: GCP zone to host the runner
+        default: us-central1-f
+        type: string
+
+jobs:
+  create-runner:
+    uses: ./.github/workflows/sub_create-runner.yaml
+    secrets:
+      credentials: ${{ secrets.GCP_CREDENTIALS }}
+      pat_token: ${{ secrets.SELF_HOSTED_RUNNER_PAT_TOKEN }}
+    with:
+      runner_template: ${{ inputs.runner_template }}
+      zone: ${{ inputs.zone }}
+
+  e2e:
+    needs: create-runner
+    if: ${{ always() }}
+    runs-on: ${{ needs.create-runner.outputs.public_domain }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+  clean-and-delete-runner:
+    needs: [create-runner, e2e]
+    if: ${{ always() }}
+    uses: ./.github/workflows/sub_clean-and-delete-runner.yaml
+    secrets:
+      credentials: ${{ secrets.GCP_CREDENTIALS }}
+      pat_token: ${{ secrets.SELF_HOSTED_RUNNER_PAT_TOKEN }}
+    with:
+      create_runner_result: ${{ needs.create-runner.result }}
+      destroy_runner: ${{ inputs.destroy_runner }}
+      runner_hostname: ${{ needs.create-runner.outputs.runner_hostname }}
+      runner_label: ${{ needs.create-runner.outputs.runner_label }}
+      zone: ${{ inputs.zone }}
