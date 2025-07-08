@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           #repository: ${{ github.repository_owner }}/kubewarden-end-to-end-tests
-          repository: juadk/kubewarden-end-to-end-tests-fork
+          repository: juadk/kubewarden-end-to-end-tests
           path: e2e-tests
           submodules: 'true'
 
@@ -70,8 +70,8 @@ jobs:
         id: setup_go
         uses: actions/setup-go@v5
         with:
-          cache-dependency-path: ./e2e-tests/tests/airgap/go.sum
-          go-version-file: ./e2e-tests/tests/airgap/go.mod
+          cache-dependency-path: ./e2e-tests/tests/ginkgo-e2e/go.sum
+          go-version-file: ./e2e-tests/tests/ginkgo-e2e/go.mod
 
       - name: Define needed system variables
         run: |
@@ -80,7 +80,7 @@ jobs:
 
       - name: Prepare Airgap files
         run: |
-          cd ${GITHUB_WORKSPACE}/e2e-tests/tests/airgap
+          cd ${GITHUB_WORKSPACE}/e2e-tests/tests/ginkgo-e2e
           make e2e-prepare-archive
       
       - name: Extract component versions/informations
@@ -101,7 +101,7 @@ jobs:
 
       - name: Deploy airgap infrastructure
         id: deploy_airgap_infra
-        run: cd ${GITHUB_WORKSPACE}/e2e-tests/tests/airgap && make e2e-airgap-rancher
+        run: cd ${GITHUB_WORKSPACE}/e2e-tests/tests/ginkgo-e2e && make e2e-airgap-rancher
         env:
           KUBEWARDEN_CONTROLLER_VERSION: ${{ steps.component.outputs.kubewarden_controller_version }}
           AUDIT_SCANNER_VERSION: ${{ steps.component.outputs.audit_scanner_version }}
