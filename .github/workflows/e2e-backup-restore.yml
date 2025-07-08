@@ -1,0 +1,193 @@
+# This workflow calls the master E2E workflow with custom variables
+name: CLI-Full-Backup-Restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_runner:
+        description: Destroy the auto-generated self-hosted runner
+        default: true
+        type: boolean
+      k3s_version:
+        description: K3S version to use
+        type: string
+        default: 'v1.31.7+k3s1'
+      kubewarden_repo:
+        description: Repository to use for Kubewarden
+        type: string
+        default: 'https://charts.kubewarden.io ' 
+      runner_template:
+        description: Runner template to use
+        default: kubewarden-e2e-ci-runner-x86-64-template-v1
+        type: string
+      zone:
+        description: GCP zone to host the runner
+        default: us-central1-f
+        type: string
+
+jobs:
+  create-runner:
+    uses: ./.github/workflows/sub_create-runner.yaml
+    secrets:
+      credentials: ${{ secrets.GCP_CREDENTIALS }}
+      pat_token: ${{ secrets.KUBEWARDEN_SELF_HOSTED_RUNNER_PAT_TOKEN }}
+    with:
+      runner_template: ${{ inputs.runner_template || 'kubewarden-e2e-ci-runner-x86-64-template-v1' }}
+      zone: ${{ inputs.zone || 'us-central1-f' }}
+
+  e2e:
+    needs: create-runner
+    if: ${{ always() }}
+    runs-on: ${{ needs.create-runner.outputs.runner_label }}
+    env:
+      K3S_VERSION: ${{ inputs.k3s_version || 'v1.31.7+k3s1' }}
+      KUBEWARDEN_REPO: ${{ inputs.kubewarden_repo || 'https://charts.kubewarden.io ' }}'
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout e2e
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          #repository: ${{ github.repository_owner }}/kubewarden-end-to-end-tests
+          repository: juadk/kubewarden-end-to-end-tests-fork
+          path: e2e-tests
+          submodules: 'true'
+
+      - name: Authenticate to GCP
+        id: authenticate
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Setup gcloud
+        id: setup_gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download QCOW2 VM image
+        id: download_qcow2
+        run: |
+          QCOW2_FILE="rancher-image.qcow2"
+          gcloud storage cp gs://elemental-airgap-image/${QCOW2_FILE} ${HOME}/${QCOW2_FILE}
+
+      - name: Setup Go
+        id: setup_go
+        uses: actions/setup-go@v5
+        with:
+          cache-dependency-path: ./e2e-tests/tests/airgap/go.sum
+          go-version-file: ./e2e-tests/tests/airgap/go.mod
+
+      - name: Define needed system variables
+        run: |
+          # Add missing PATH, removed in recent distributions for security reasons...
+          echo "/usr/local/bin" >> ${GITHUB_PATH}
+
+      - name: Install backup-restore components
+        id: install_backup_restore
+        env:
+          BACKUP_RESTORE_VERSION: ${{ inputs.backup_restore_version }}
+        run: cd tests && make e2e-install-backup-restore
+
+      - name: Extract component versions/informations
+        id: component
+        run: |
+          # Extract rancher-backup-operator version
+          BACKUP_OPERATOR_VERSION=$(kubectl get pod \
+                                     --namespace cattle-resources-system \
+                                     -l app.kubernetes.io/name=rancher-backup \
+                                     -o jsonpath={.items[*].status.containerStatuses[*].image} 2> /dev/null || true)
+
+          # Extract CertManager version
+          CERT_MANAGER_VERSION=$(kubectl get pod \
+                                   --namespace cert-manager \
+                                   -l app=cert-manager \
+                                   -o jsonpath={.items[*].status.containerStatuses[*].image} 2> /dev/null || true)
+
+          # Extract elemental-operator version
+          OPERATOR_VERSION=$(kubectl get pod \
+                               --namespace cattle-elemental-system \
+                               -l app=elemental-operator \
+                               -o jsonpath={.items[*].status.containerStatuses[*].image} 2> /dev/null || true)
+
+          # Extract Rancher Manager version
+          RANCHER_VERSION=$(kubectl get pod \
+                              --namespace cattle-system \
+                              -l app=rancher \
+                              -o jsonpath={.items[*].status.containerStatuses[*].image} 2> /dev/null || true)
+
+      - name: Install Kubewarden
+        id: install_kubewarden
+        run: |
+          cd e2e-tests/tests/kubewarden
+          make e2e-install-kubewarden
+
+          
+      - name: Test Backup/Restore Rancher Manager/Elemental resources
+        id: test_backup_restore
+        env:
+          CA_TYPE: ${{ inputs.ca_type }}
+          OPERATOR_REPO: ${{ inputs.operator_repo }}
+          PUBLIC_FQDN: ${{ inputs.public_fqdn }}
+          PUBLIC_DOMAIN: ${{ inputs.public_domain }}
+        run: |
+          cd tests
+          make e2e-full-backup-restore
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      - name: Prepare Airgap files
+        run: |
+          cd ${GITHUB_WORKSPACE}/e2e-tests/tests/airgap
+          make e2e-prepare-archive
+      
+      - name: Extract component versions/informations
+        id: component
+        run: |
+          HELM_FOLDER=/home/gh-runner/airgap_rancher/helm
+          KUBEWARDEN_CONTROLLER_IMG_FILE=${HELM_FOLDER}/kubewarden-controller/imagelist.txt
+          KUBEWARDEN_DEFAULTS_IMG_FILE=${HELM_FOLDER}/kubewarden-defaults/imagelist.txt
+
+          AUDIT_SCANNER_VERSION=$(grep 'audit-scanner' ${KUBEWARDEN_CONTROLLER_IMG_FILE} | cut -d':' -f2)
+          KUBEWARDEN_CONTROLLER_VERSION=$(grep 'kubewarden-controller' ${KUBEWARDEN_CONTROLLER_IMG_FILE} | cut -d':' -f2)
+          POLICY_SERVER_VERSION=$(grep 'policy-server' ${KUBEWARDEN_DEFAULTS_IMG_FILE} | cut -d':' -f2)
+
+          # Export values
+          echo "audit_scanner_version=${AUDIT_SCANNER_VERSION}" >> ${GITHUB_OUTPUT}
+          echo "kubewarden_controller_version=${KUBEWARDEN_CONTROLLER_VERSION}" >> ${GITHUB_OUTPUT}
+          echo "policy_server_version=${POLICY_SERVER_VERSION}" >> ${GITHUB_OUTPUT}
+
+      - name: Deploy airgap infrastructure
+        id: deploy_airgap_infra
+        run: cd ${GITHUB_WORKSPACE}/e2e-tests/tests/airgap && make e2e-airgap-rancher
+        env:
+          KUBEWARDEN_CONTROLLER_VERSION: ${{ steps.component.outputs.kubewarden_controller_version }}
+          AUDIT_SCANNER_VERSION: ${{ steps.component.outputs.audit_scanner_version }}
+          POLICY_SERVER_VERSION: ${{ steps.component.outputs.policy_server_version }}
+
+  clean-and-delete-runner:
+    needs: [create-runner, e2e]
+    if: ${{ always() && needs.create-runner.result == 'success' && (github.event_name == 'schedule' || inputs.destroy_runner == true) }}
+    uses: ./.github/workflows/sub_clean-and-delete-runner.yaml
+    secrets:
+      credentials: ${{ secrets.GCP_CREDENTIALS }}
+      pat_token: ${{ secrets.KUBEWARDEN_SELF_HOSTED_RUNNER_PAT_TOKEN }}
+    with:
+      create_runner_result: ${{ needs.create-runner.result }}
+      destroy_runner: ${{ inputs.destroy_runner || true }}
+      runner_hostname: ${{ needs.create-runner.outputs.runner_hostname }}
+      runner_label: ${{ needs.create-runner.outputs.runner_label }}
+      zone: ${{ inputs.zone || 'us-central1-f' }}
