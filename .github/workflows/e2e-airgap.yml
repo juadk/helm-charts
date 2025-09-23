@@ -115,9 +115,9 @@ jobs:
         run: |
           pwd
           if ${{ contains(matrix.mode, 'upgrade') || inputs.upgrade == true }}; then
-            HAULER_MANIFEST=/home/gh-runner/actions-runner/_work/helm-charts/helm-charts/charts/hauler_manifest_prev.yaml
+            HAULER_MANIFEST=./charts/hauler_manifest_prev.yaml
           else
-            HAULER_MANIFEST=/home/gh-runner/actions-runner/_work/helm-charts/helm-charts/charts/hauler_manifest.yaml
+            HAULER_MANIFEST=./charts/hauler_manifest.yaml
           fi
 
           AUDIT_SCANNER_VERSION=$(grep 'audit-scanner:v' ${HAULER_MANIFEST} | cut -d':' -f3)
@@ -145,7 +145,7 @@ jobs:
         if: ${{ matrix.mode == 'upgrade' || inputs.upgrade == true }}
         id: component_upgrade
         run: |
-          HAULER_MANIFEST=/home/gh-runner/actions-runner/_work/helm-charts/helm-charts/charts/hauler_manifest.yaml
+          HAULER_MANIFEST=./charts/hauler_manifest.yaml
 
           AUDIT_SCANNER_VERSION=$(grep 'audit-scanner:v' ${HAULER_MANIFEST} | cut -d':' -f3)
           KUBEWARDEN_CONTROLLER_VERSION=$(grep 'kubewarden-controller:v' ${HAULER_MANIFEST} | cut -d':' -f3)
